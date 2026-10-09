@@ -1,0 +1,165 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny all unmapped paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Primitives & Security Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'google.com' ||
+        request.auth.token.firebase.sign_in_provider == 'anonymous'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isParticipant(gameData) {
+      return isSignedIn() && (
+        gameData.playerXId == request.auth.uid ||
+        gameData.creatorId == request.auth.uid ||
+        ('playerOId' in gameData && gameData.playerOId != null && gameData.playerOId == request.auth.uid)
+      );
+    }
+
+    // Validation Blueprint for Game
+    function isValidGame(data) {
+      return data.keys().hasAll(['id', 'gameCode', 'creatorId', 'mode', 'playerXId', 'status', 'currentTurn', 'totalEvents', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'gameCode', 'creatorId', 'creatorName', 'creatorPhoto', 'mode', 'aiDifficulty', 'playerXId', 'playerXName', 'playerOId', 'playerOName', 'status', 'winner', 'currentTurn', 'totalEvents', 'createdAt', 'updatedAt']) &&
+        data.id is string && data.id.size() >= 4 && data.id.size() <= 32 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.gameCode is string && data.gameCode.size() >= 4 && data.gameCode.size() <= 16 && data.gameCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.creatorId is string && data.creatorId.size() > 0 && data.creatorId.size() <= 128 &&
+        (!('creatorName' in data) || (data.creatorName is string && data.creatorName.size() <= 100)) &&
+        (!('creatorPhoto' in data) || (data.creatorPhoto is string && data.creatorPhoto.size() <= 500)) &&
+        data.mode in ['ai', 'multiplayer'] &&
+        (!('aiDifficulty' in data) || (data.aiDifficulty in ['easy', 'medium', 'hard'])) &&
+        data.playerXId is string && data.playerXId.size() > 0 && data.playerXId.size() <= 128 &&
+        (!('playerXName' in data) || (data.playerXName is string && data.playerXName.size() <= 100)) &&
+        (!('playerOId' in data) || data.playerOId == null || (data.playerOId is string && data.playerOId.size() <= 128)) &&
+        (!('playerOName' in data) || data.playerOName == null || (data.playerOName is string && data.playerOName.size() <= 100)) &&
+        data.status in ['waiting', 'in_progress', 'completed', 'abandoned'] &&
+        (!('winner' in data) || data.winner == null || data.winner in ['X', 'O', 'draw', 'none']) &&
+        data.currentTurn in ['X', 'O'] &&
+        data.totalEvents is number && data.totalEvents >= 0 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint for GameEvent
+    function isValidGameEvent(data) {
+      return data.keys().hasAll(['id', 'gameId', 'eventNumber', 'type', 'playerId', 'timestamp']) &&
+        data.keys().hasOnly(['id', 'gameId', 'eventNumber', 'type', 'turnNumber', 'targetTurnNumber', 'player', 'playerId', 'cellIndex', 'timestamp']) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.gameId is string && data.gameId.size() >= 4 && data.gameId.size() <= 64 && data.gameId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.eventNumber is number && data.eventNumber >= 0 &&
+        data.type in ['GAME_STARTED', 'MOVE_PLAYED', 'GAME_ROLLED_BACK', 'GAME_RESET'] &&
+        (!('turnNumber' in data) || (data.turnNumber is number && data.turnNumber >= 0)) &&
+        (!('targetTurnNumber' in data) || (data.targetTurnNumber is number && data.targetTurnNumber >= 0)) &&
+        (!('player' in data) || data.player in ['X', 'O']) &&
+        data.playerId is string && data.playerId.size() > 0 && data.playerId.size() <= 128 &&
+        (!('cellIndex' in data) || (data.cellIndex is number && data.cellIndex >= 0 && data.cellIndex <= 8)) &&
+        data.timestamp is timestamp;
+    }
+
+    // Games Collection Rules
+    match /games/{gameId} {
+      // Single get allowed for lookup by share link / game code
+      allow get: if isVerified() && isValidId(gameId);
+
+      // Query listing allowed only when querying user's own matches
+      allow list: if isVerified() && (
+        resource.data.creatorId == request.auth.uid ||
+        resource.data.playerXId == request.auth.uid ||
+        ('playerOId' in resource.data && resource.data.playerOId == request.auth.uid)
+      );
+
+      // Game creation: Authenticated user creating a new game
+      allow create: if isVerified() &&
+        isValidId(gameId) &&
+        isValidGame(incoming()) &&
+        incoming().id == gameId &&
+        incoming().creatorId == request.auth.uid &&
+        incoming().playerXId == request.auth.uid &&
+        (incoming().createdAt == request.time || incoming().createdAt is timestamp) &&
+        (incoming().updatedAt == request.time || incoming().updatedAt is timestamp);
+
+      // Game update: State transitions (Join, Move commit, Rollback commit, Reset)
+      allow update: if isVerified() &&
+        isValidId(gameId) &&
+        isValidGame(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().creatorId == existing().creatorId &&
+        incoming().createdAt == existing().createdAt &&
+        (incoming().updatedAt == request.time || incoming().updatedAt is timestamp) && (
+          // Action 1: Join Game (Second player joining multiplayer game)
+          (
+            existing().status == 'waiting' &&
+            incoming().status == 'in_progress' &&
+            incoming().playerOId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['playerOId', 'playerOName', 'status', 'updatedAt'])
+          ) ||
+          // Action 2: Progress Game (Moves, Turns, Results, Rollbacks)
+          (
+            isParticipant(existing()) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['currentTurn', 'status', 'winner', 'totalEvents', 'updatedAt'])
+          )
+        );
+
+      // Delete allowed only by creator
+      allow delete: if isVerified() && isValidId(gameId) && existing().creatorId == request.auth.uid;
+
+      // Event Sourcing Subcollection
+      match /events/{eventId} {
+        // Individual event read
+        allow get: if isVerified() && isValidId(eventId);
+
+        // List queries on the events subcollection
+        allow list: if isVerified();
+
+        // Append-only event creation
+        allow create: if isVerified() &&
+          isValidId(eventId) &&
+          isValidGameEvent(incoming()) &&
+          incoming().id == eventId &&
+          incoming().gameId == gameId &&
+          (incoming().timestamp == request.time || incoming().timestamp is timestamp) && (
+            exists(/databases/$(database)/documents/games/$(gameId)) && (
+              get(/databases/$(database)/documents/games/$(gameId)).data.playerXId == request.auth.uid ||
+              get(/databases/$(database)/documents/games/$(gameId)).data.creatorId == request.auth.uid ||
+              (
+                'playerOId' in get(/databases/$(database)/documents/games/$(gameId)).data &&
+                get(/databases/$(database)/documents/games/$(gameId)).data.playerOId != null &&
+                get(/databases/$(database)/documents/games/$(gameId)).data.playerOId == request.auth.uid
+              )
+            )
+          );
+
+        // Events in event sourcing are append-only and immutable
+        allow update, delete: if false;
+      }
+    }
+
+    // Health check test connection path
+    match /test/{docId} {
+      allow read: if true;
+    }
+  }
+}

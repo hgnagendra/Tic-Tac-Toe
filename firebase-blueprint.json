@@ -1,0 +1,167 @@
+{
+  "entities": {
+    "Game": {
+      "title": "Game",
+      "description": "Represents a Tic-Tac-Toe match between two users or a user and an AI player.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique 6-character match code or identifier",
+          "minLength": 4,
+          "maxLength": 32,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "gameCode": {
+          "type": "string",
+          "description": "Short code used by players to join the match",
+          "minLength": 4,
+          "maxLength": 16,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "creatorId": {
+          "type": "string",
+          "description": "Firebase UID of the game creator",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "creatorName": {
+          "type": "string",
+          "description": "Display name of the game creator",
+          "maxLength": 100
+        },
+        "creatorPhoto": {
+          "type": "string",
+          "description": "Avatar URL of creator",
+          "maxLength": 500
+        },
+        "mode": {
+          "type": "string",
+          "description": "Game mode: ai or multiplayer",
+          "enum": ["ai", "multiplayer"]
+        },
+        "aiDifficulty": {
+          "type": "string",
+          "description": "AI Minimax difficulty if playing against AI",
+          "enum": ["easy", "medium", "hard"]
+        },
+        "playerXId": {
+          "type": "string",
+          "description": "User ID playing X",
+          "maxLength": 128
+        },
+        "playerXName": {
+          "type": "string",
+          "description": "Display name of player X",
+          "maxLength": 100
+        },
+        "playerOId": {
+          "type": "string",
+          "description": "User ID playing O (or 'ai')",
+          "maxLength": 128
+        },
+        "playerOName": {
+          "type": "string",
+          "description": "Display name of player O",
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Status of the game match",
+          "enum": ["waiting", "in_progress", "completed", "abandoned"]
+        },
+        "winner": {
+          "type": "string",
+          "description": "Winner of the game match",
+          "enum": ["X", "O", "draw", "none"]
+        },
+        "currentTurn": {
+          "type": "string",
+          "description": "Whose turn it currently is",
+          "enum": ["X", "O"]
+        },
+        "totalEvents": {
+          "type": "number",
+          "description": "Count of events committed to this game"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when game was created"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when game was last updated"
+        }
+      },
+      "required": ["id", "gameCode", "creatorId", "mode", "playerXId", "status", "currentTurn", "totalEvents"]
+    },
+    "GameEvent": {
+      "title": "GameEvent",
+      "description": "An event document in the subcollection recording moves, rollbacks, and lifecycle state changes.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Document ID for the event",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "gameId": {
+          "type": "string",
+          "description": "Parent game ID",
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "eventNumber": {
+          "type": "number",
+          "description": "Monotonically increasing sequence number (0, 1, 2...)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of game event",
+          "enum": ["GAME_STARTED", "MOVE_PLAYED", "GAME_ROLLED_BACK", "GAME_RESET"]
+        },
+        "turnNumber": {
+          "type": "number",
+          "description": "Logical turn number associated with the event"
+        },
+        "targetTurnNumber": {
+          "type": "number",
+          "description": "Target turn number rolled back to for ROLLBACK events"
+        },
+        "player": {
+          "type": "string",
+          "description": "Mark of the player who made the move",
+          "enum": ["X", "O"]
+        },
+        "playerId": {
+          "type": "string",
+          "description": "User ID of the player who triggered the event",
+          "maxLength": 128
+        },
+        "cellIndex": {
+          "type": "number",
+          "description": "Board position index (0 to 8)"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the event occurred"
+        }
+      },
+      "required": ["id", "gameId", "eventNumber", "type", "playerId"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": "Game",
+      "description": "Collection of Tic-Tac-Toe games and matches"
+    },
+    "/games/{gameId}/events/{eventId}": {
+      "schema": "GameEvent",
+      "description": "Event sourcing subcollection recording every turn, move, and rollback event in chronological sequence"
+    }
+  }
+}
