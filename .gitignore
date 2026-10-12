@@ -1,8 +1,18 @@
+# Dependencies
 node_modules/
+
+# Production build artifacts
 build/
 dist/
 coverage/
+
+# System and logs
 .DS_Store
 *.log
+
+# Environment variables and secrets (Strictly ignored for GitHub)
+.env
+.env.local
+.env.*.local
 .env*
 !.env.example

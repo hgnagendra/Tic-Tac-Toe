@@ -1,7 +1,18 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import baseFirebaseConfig from '../../firebase-applet-config.json';
+
+// Load API key strictly from the GEMINI_API_KEY environment variable
+const apiKey =
+  (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
+  import.meta.env?.GEMINI_API_KEY ||
+  '';
+
+const firebaseConfig = {
+  ...baseFirebaseConfig,
+  apiKey,
+};
 
 const app = initializeApp(firebaseConfig);
 
